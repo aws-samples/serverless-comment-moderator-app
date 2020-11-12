@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Comment Moderator - automates the approval of Disqus forum comments
+  based on sentiment analysis.
+
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: 'Comment-Moderator'
+    Description: This application polls a forum on Disqus for unapproved comments and will approve comments automatically based upon sentiment analysis.
+    Author: James Beswick
+    SpdxLicenseId: mit-0
+    LicenseUrl: LICENSE.txt
+    ReadmeUrl: README.md
+    Labels: ['disqus', 'moderation', 'sentiment', 'lambda']
+    HomePageUrl: https://github.com/aws-samples/aws-serverless-sar-comment-moderator/
+    SemanticVersion: 1.0.0
+    SourceCodeUrl: https://github.com/aws-samples/aws-serverless-sar-comment-moderator/tree/1.0.0
+
+Parameters:
+  ForumName:
+    Type: String
+    Default: 'yourDisqusForumName'
+    Description: (Required) The name of the Disqus forum you want to poll
+    AllowedPattern: ^[A-Za-z0-9-]+$
+    ConstraintDescription: 'Required parameter.'
+
+  AccessToken:
+    Type: String
+    Default: 'yourDisqusAccessToken'
+    Description: (Required) Disqus API access token
+    AllowedPattern: ^[A-Za-z0-9]+$
+    ConstraintDescription: 'Required parameter.'
+
+  APIkey:
+    Type: String
+    Default: 'yourDisqusAPIkey'
+    Description: (Required) Disqus API key
+    AllowedPattern: ^[A-Za-z0-9]+$
+    ConstraintDescription: 'Required parameter.'
+
+  APIsecret:
+    Type: String
+    Default: 'yourDisqusAPIsecret'
+    Description: (Required) Disqus API secret
+    AllowedPattern: ^[A-Za-z0-9]+$
+    ConstraintDescription: 'Required parameter.'
+
+Globals:
+  Function:
+    Timeout: 15
+    Environment:
+      Variables:
+        forum: !Ref ForumName
+        ddb_table: !Ref PollerTable
+        access_token: !Ref AccessToken
+        api_key: !Ref APIkey
+        api_secret: !Ref APIsecret
+
+Resources:
+  PollerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: disqusPoller/
+      Handler: app.lambdaHandler
+      Runtime: nodejs12.x
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName: !Ref PollerTable
+      - Statement:
+        - Sid: comprehendDetectSentimentPolicy
+          Effect: Allow
+          Action:
+          - comprehend:DetectSentiment
+          Resource: '*'
+      Events:
+        Schedule1:
+          Type: Schedule
+          Properties:
+            Schedule: rate(15 minutes)
+      Tags:
+        AppName: AWSDeveloperAdvocateSample
+  ProcessorFunction:
+    Type: AWS::Serverless::Function 
+    Properties:
+      CodeUri: disqusProcessor/
+      Handler: app.lambdaHandler
+      Runtime: nodejs12.x
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName: !Ref PollerTable
+      Events:
+        DynamoDB1:
+          Type: DynamoDB
+          Properties:
+            Stream:
+              'Fn::GetAtt':
+                - PollerTable
+                - StreamArn
+            StartingPosition: TRIM_HORIZON
+            BatchSize: 100
+      Tags:
+        AppName: AWSDeveloperAdvocateSample        
+  PollerTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: disqusId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: disqusId
+        KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification: 
+        AttributeName: created
+        Enabled: true      
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+
+Outputs:
+  PollerFunction:
+    Description: "Poller Lambda Function ARN"
+    Value: !GetAtt PollerFunction.Arn
+  PollerFunctionIamRole:
+    Description: "Implicit IAM Role created for Poller function"
+    Value: !GetAtt PollerFunctionRole.Arn
+  PollerTable:
+    Value: !GetAtt PollerTable.Arn
+    Description: Table name of the newly created DynamoDB table

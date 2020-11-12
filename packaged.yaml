@@ -1,0 +1,143 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Comment Moderator - automates the approval of Disqus forum comments
+  based on sentiment analysis.
+
+  '
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: Comment-Moderator
+    Description: This application polls a forum on Disqus for unapproved comments
+      and will approve comments automatically based upon sentiment analysis.
+    Author: James Beswick
+    SpdxLicenseId: mit-0
+    LicenseUrl: s3://jbesw-sar-public-source/bb66c8f9891604947010c7e819f4d7ce
+    ReadmeUrl: s3://jbesw-sar-public-source/736e1f7065a2a1d023a67023331d7254
+    Labels:
+    - disqus
+    - moderation
+    - sentiment
+    - lambda
+    HomePageUrl: https://git-codecommit.us-east-1.amazonaws.com/v1/repos/01-comment-moderator
+    SemanticVersion: 1.0.0
+    SourceCodeUrl: https://git-codecommit.us-east-1.amazonaws.com/v1/repos/01-comment-moderator
+Parameters:
+  ForumName:
+    Type: String
+    Default: yourDisqusForumName
+    Description: (Required) The name of the Disqus forum you want to poll
+    AllowedPattern: ^[A-Za-z0-9-]+$
+    ConstraintDescription: Required parameter.
+  AccessToken:
+    Type: String
+    Default: yourDisqusAccessToken
+    Description: (Required) Disqus API access token
+    AllowedPattern: ^[A-Za-z0-9]+$
+    ConstraintDescription: Required parameter.
+  APIkey:
+    Type: String
+    Default: yourDisqusAPIkey
+    Description: (Required) Disqus API key
+    AllowedPattern: ^[A-Za-z0-9]+$
+    ConstraintDescription: Required parameter.
+  APIsecret:
+    Type: String
+    Default: yourDisqusAPIsecret
+    Description: (Required) Disqus API secret
+    AllowedPattern: ^[A-Za-z0-9]+$
+    ConstraintDescription: Required parameter.
+Globals:
+  Function:
+    Timeout: 15
+    Environment:
+      Variables:
+        forum:
+          Ref: ForumName
+        ddb_table:
+          Ref: PollerTable
+        access_token:
+          Ref: AccessToken
+        api_key:
+          Ref: APIkey
+        api_secret:
+          Ref: APIsecret
+Resources:
+  PollerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: s3://jbesw-sar-public-source/9a35d1f90a1dadeafa3c6af0401eb4bb
+      Handler: app.lambdaHandler
+      Runtime: nodejs12.x
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: PollerTable
+      - Statement:
+        - Sid: comprehendDetectSentimentPolicy
+          Effect: Allow
+          Action:
+          - comprehend:DetectSentiment
+          Resource: '*'
+      Events:
+        Schedule1:
+          Type: Schedule
+          Properties:
+            Schedule: rate(15 minutes)
+      Tags:
+        AppName: AWSDeveloperAdvocateSample
+  ProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: s3://jbesw-sar-public-source/5ae3ed7185541f429a7e1a2ab8bb39e6
+      Handler: app.lambdaHandler
+      Runtime: nodejs12.x
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: PollerTable
+      Events:
+        DynamoDB1:
+          Type: DynamoDB
+          Properties:
+            Stream:
+              Fn::GetAtt:
+              - PollerTable
+              - StreamArn
+            StartingPosition: TRIM_HORIZON
+            BatchSize: 100
+      Tags:
+        AppName: AWSDeveloperAdvocateSample
+  PollerTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: disqusId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: disqusId
+        KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: created
+        Enabled: true
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+Outputs:
+  PollerFunction:
+    Description: Poller Lambda Function ARN
+    Value:
+      Fn::GetAtt:
+      - PollerFunction
+      - Arn
+  PollerFunctionIamRole:
+    Description: Implicit IAM Role created for Poller function
+    Value:
+      Fn::GetAtt:
+      - PollerFunctionRole
+      - Arn
+  PollerTable:
+    Value:
+      Fn::GetAtt:
+      - PollerTable
+      - Arn
+    Description: Table name of the newly created DynamoDB table
